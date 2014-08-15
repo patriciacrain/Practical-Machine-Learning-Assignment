@@ -1,0 +1,129 @@
+Machine Learning on Weight Lifting Exercise Data
+-----------------------------------------------------------
+```{r set-options, echo=FALSE}
+options(width=100)
+```
+#### Executive Summary
+
+The purpose of this assignment is to build a model which accurately predicts the `classe` variable in the *Qualitative Activity Recognition of Weight Lifting Exercise* dataset as originally compiled by E. Velloso, A. Bulling, H. Gellersen, W. Ugulino, and H. Fuks and published in [their paper](http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf) for the 4th Augmented Human International Conference in March of 2013. 
+
+#### Study Design: Cross Validation Overview
+
+1. Use the *pml-training.csv* which contains the class labels to predict the model
+2. Hold out the *pml-testing.csv* to evaluate the model at the end
+3. Split the *pml-training.csv* data into training/testing datasets using 70/30 split
+4. Build a Random Forest model using the training dataset 
+5. Test the model on the testing dataset
+6. Evaluate the model on the holdout *pml-testing.csv* data
+7. Submit the results from the evaluation for automated grading
+
+#### Reading in and Preprocessing Data
+##### Splitting the data for Cross Validation
+First, we downloaded the data from its location online. We partitioned the *pml-training.csv* dataset using a 70/30 split into a training and testing dataset to be used for building and testing the model respectively. We reserve *pml-testing.csv* (containing the 20 test cases) as a holdout dataset to be used only at the end of the project as a means of evaluating the model.
+
+```{r download.data, cache=TRUE, message=FALSE}
+## Download the Data
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "pml-training.csv", method="curl")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml-testing.csv", method="curl")
+library(caret)
+library(randomForest)
+library(ggplot2)
+```
+
+
+```{r read.in.data}
+pml <- read.csv("pml-training.csv", na.strings=c("NA",""))
+inTrain <- createDataPartition(y=pml$classe, p=0.70, list=FALSE)
+training <- pml[inTrain,]
+testing <- pml[-inTrain,]
+dim(training); dim(testing)
+```
+
+We see that there are 160 variables in the dataset. This is a very large number of variables, so we would like to see if some of them might be eliminated. 
+
+##### Understanding the Classe Variable
+Participants in the original study were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different ways: 
+
+* exactly according to the specication (Class A)
+* throwing the elbows to the front (Class B)
+* lifting the dumbbell only halfway (Class C)
+* lowering the dumbbell only halfway (Class D)
+* throwing the hips to the front (Class E). 
+
+Note that Class A corresponds to the correct execution of the exercise, while the other 4 classes correspond to common mistakes. 
+
+##### Preprocessing the Data
+Since the goal of this assignment is to accurately predict the `classe` variable, we should select the variables which will have the most predictive power to be used in the model. With this in mind we remove a number of variables which contain a large number of NAs (or blanks). 
+```{r preprocess}
+means <- apply(pml,2,function(x) mean(is.na(x)))
+non.nas <- names(means[means==0])
+training <- training[non.nas]
+training <- training[,8:60]
+testing <- testing[non.nas]
+testing <- testing[,8:60]
+```
+
+We also removed the following variables as they too have little predictive power: 
+```{r variables.rm, echo=FALSE}
+str(pml[1:7])
+```
+
+This leaves us with a much more manageable set of variables (53) to use in building our predictive model.
+
+#### Building the Model
+
+We decided to use a Random Forest model for this assignment because it is one of the most accurate among current algorithms and becuase it runs efficiently on large datasets. Another benefit to the Random Forest algorithm is that it incorporates cross-validation in the very nature of the model creation as "each tree is constructed using a different bootstrap sample from the original data. About one-third of the cases are left out of the bootstrap sample and not used in the construction of the kth tree." (Breiman and Cutler, [Random Forests](http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm), University of California, Berkeley)
+
+```{r build.model, cache=TRUE}
+model <- randomForest(classe~., data=training)
+```
+
+The following is a plot of the error rate as trees are added to our random forest model. Note that as the number of trees in the model increase, the error rate decreases and eventually plateaus.
+
+```{r plot.model, echo=FALSE}
+plot(model, main="Error Rate of the Random Forest model")
+```
+
+##### Out of Sample Error
+We test the model on the testing dataset we created so that we can find the out-of-sample error and compare it to the in-sample error. We would expect the out-of-sample error to be slightly more than the in-sample error, but if our model is predicting accurately then the out-of-sample error should still be quite low.
+
+```{r ise.ose}
+predicttrain <- predict(model, training[,-53])
+cm.train <- confusionMatrix(training$classe,predicttrain)
+ise <- cm.train$overall[1]
+predicttest <- predict(model, testing[,-53])
+cm.test <- confusionMatrix(testing$classe,predicttest)
+ose <- cm.test$overall[1]
+```
+
+The out-of-sample error is `r 1-ose` vs the in-sample error of `r 1-ise`. This means that we have built a very accurate model which performs nearly as well on the testing dataset as it did on the training dataset. Below is a plot which shows a confusion matrix table of predicted values (x axis) vs the actual values (y axis) when the model was applied to the test data. This also confirms that the model performs very well.
+
+```{r plot.cm, echo=FALSE}
+cm2 <- as.data.frame(cm.test$table)
+p2 <- ggplot(cm2, aes(Prediction, Reference, label=Freq)) +
+  geom_tile(aes(fill=Freq)) +
+  scale_y_discrete(limits=flevels) +
+  geom_text() +
+  scale_fill_gradient(low = "white", high = "red")+
+  ggtitle("Confusion Matrix of Random Forest model applied to Testing dataset")
+p2
+```
+
+#### Evaluating the Model
+
+Finally, we evaluate the model against the holdout dataset. The output from `predicteval` shows the Class assigned to each of the 20 test cases by our model. When submitted for autmoated grading, these values were 100% correct. 
+
+```{r eval}
+eval <- read.csv("pml-testing.csv", na.strings=c("NA",""))
+means <- apply(eval,2,function(x) mean(is.na(x)))
+non.nas <- names(means[means==0])
+eval <- eval[non.nas]
+eval <- eval[,8:60]
+predicteval <- predict(model, eval[,-53])
+predicteval <- as.character(predicteval)
+predicteval
+```
+
+### Conclusion
+
+Using a random forest model we have accurately predicted the `classe` variable as designated in the *Qualitative Activity Recognition of Weight Lifting Exercise* dataset. We have used cross validation methods both in the process of training our model (by splitting the data into a training and testing dataset) and by choosing the random forest algorithm which automatically imposes a cross validation method "under the hood" when creating each tree. In testing our model we found that the out-of-sample error was very good (only `r 1-ose`) and only slightly worse than the in-sample error. Thus we see no need to test other models as the random forest model created here performs excellently. 
